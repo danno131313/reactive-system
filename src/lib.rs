@@ -28,14 +28,23 @@ pub enum CellID {
     Compute(ComputeCellID),
 }
 
+impl CellID {
+    pub fn get_id(&self) -> u64 {
+        match self {
+            CellID::Input(cellid) => cellid.0,
+            CellID::Compute(cellid) => cellid.0,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum RemoveCallbackError {
     NonexistentCell,
     NonexistentCallback,
 }
 
+
 struct ComputeCell<T> {
-    val: T,
     func: Box<Fn(&[T]) -> T>,
     _deps: Vec<CellID>,
 }
@@ -49,18 +58,27 @@ enum Cell<T> {
     Input(InputCell<T>),
 }
 
-impl<T> Cell<T> {
-    fn get_val(&self) -> &T {
-        match self {
-            Cell::Compute(computecell) => &computecell.val,
-            Cell::Input(inputcell) => &inputcell.val,
-        }
-    }
-}
-
 pub struct Reactor<T> {
     id: u64,
     cells: HashMap<u64, Cell<T>>,
+}
+
+impl<T: Copy + PartialEq> Cell<T> {
+    fn get_val(&self, reactor: &Reactor<T>) -> T {
+        match self {
+            Cell::Compute(computecell) => {
+                let mut computed = Vec::new();
+                for dep in computecell._deps.iter() {
+                    let id = dep.get_id();
+                    let cell = reactor.cells.get(&id).unwrap();
+                    computed.push(cell.get_val(&reactor));
+                }
+                let func = &computecell.func;
+                func(&computed)
+            },
+            Cell::Input(inputcell) => inputcell.val,
+        }
+    }
 }
 
 // You are guaranteed that Reactor will only be tested against types that are Copy + PartialEq.
@@ -101,19 +119,17 @@ impl <T: Copy + PartialEq> Reactor<T> {
             match self.cells.get(&id) {
                 None => return Err(*dep),
                 Some(cell) => {
-                    let val = cell.get_val();
-                    cellcontents.push(*val);
+                    let val = cell.get_val(&self);
+                    cellcontents.push(val);
                 },
             };
         }
 
         let id = self.id;
         self.id = self.id + 1;
-        let val = compute_func(&cellcontents);
         let cell: ComputeCell<T> = ComputeCell {
             func: Box::new(compute_func),
             _deps: dependencies.to_owned(),
-            val: val,
         };
 
         self.cells.insert(id, Cell::Compute(cell));
@@ -136,7 +152,7 @@ impl <T: Copy + PartialEq> Reactor<T> {
                     None => return None,
                 };
                 
-                Some(*cell.get_val())
+                Some(cell.get_val(&self))
             },
             CellID::Compute(cell_id) => {
                 let cell = match self.cells.get(&cell_id.0) {
@@ -144,7 +160,7 @@ impl <T: Copy + PartialEq> Reactor<T> {
                     None => return None,
                 };
 
-                Some(*cell.get_val())
+                Some(cell.get_val(&self))
             },
         }
     }
